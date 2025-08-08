@@ -32,3 +32,12 @@ canvas {
   display: flex;
 }
 
+canvas {
+  width: 90vw;
+  height: 90vw;
+  max-width: 500px;
+  max-height: 500px;
+  display: block;
+  margin: 20px auto;
+  background-color: #000; /* or whatever your game bg is */
+}
