@@ -1,0 +1,482 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>2D Shooter — Responsive</title>
+<style>
+  :root{
+    --bg:#111;
+    --panel:#0f1720;
+    --muted:#9aa4b2;
+    --accent:#16a085;
+    --danger:#e74c3c;
+    --card-bg:#fff;
+  }
+  html,body{height:100%;margin:0;background:linear-gradient(180deg,#071226 0%, #00111a 100%);font-family:Inter,system-ui,Roboto,Arial;color:#e6eef6;display:flex;flex-direction:column;align-items:center;padding:12px}
+  h1{margin:8px 0 12px;font-size:20px;text-align:center}
+  .container{width:100%;max-width:980px}
+  .topRow{display:flex;gap:12px;align-items:center;flex-wrap:wrap;justify-content:space-between;margin-bottom:8px}
+  .panel{background:rgba(255,255,255,0.03);padding:10px;border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,0.4)}
+  #gameWrap{display:flex;gap:12px;align-items:flex-start;flex-wrap:wrap}
+  #gameCard{flex:1 1 520px;min-width:280px}
+  canvas{width:100%;height:auto;border-radius:10px;display:block;background:#071827}
+  .uiCol{width:260px;flex:0 0 260px;min-width:220px}
+  .controls{display:flex;flex-direction:column;gap:8px;align-items:center}
+  button{padding:10px 14px;border-radius:8px;border:0;background:linear-gradient(180deg,#fff,#e6eef6);cursor:pointer;font-weight:700}
+  #startBtn{background:linear-gradient(180deg,#2ecc71,#1fa364);color:#063218}
+  #restartBtn{background:linear-gradient(180deg,#ffb86b,#ff9c3b);color:#351b00}
+  .small{font-size:13px;color:var(--muted)}
+  .scoreBox{display:flex;flex-direction:column;gap:6px;align-items:center}
+  .big{font-size:22px;font-weight:800}
+  .leader{width:100%;max-height:220px;overflow:auto;background:rgba(0,0,0,0.15);padding:6px;border-radius:6px}
+  /* game-card thumbnail auto fit (for your homepage gallery) */
+  .game-card{width:220px;height:280px;background:var(--card-bg);border-radius:10px;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 6px 16px rgba(0,0,0,0.3)}
+  .game-card img{width:100%;height:160px;object-fit:cover}
+  .game-card a{display:block;padding:12px;background:#0b9448;color:#fff;text-align:center;text-decoration:none;font-weight:800;margin-top:auto}
+  @media (max-width:900px){ .uiCol{width:100%} }
+</style>
+</head>
+<body>
+  <div class="container">
+    <h1>2D Shooter — Responsive (Touch + Keyboard)</h1>
+
+    <div class="topRow">
+      <div class="panel small">Drag on the screen to move. Tap to shoot. Auto-fire if hold.</div>
+      <div class="panel small">Sound ON. Leaderboard saved locally.</div>
+    </div>
+
+    <div id="gameWrap">
+      <div id="gameCard" class="panel">
+        <canvas id="gameCanvas" width="640" height="960"></canvas>
+        <div style="display:flex;gap:8px;margin-top:8px;justify-content:center">
+          <button id="startBtn">▶ Start</button>
+          <button id="restartBtn">↻ Restart</button>
+        </div>
+      </div>
+
+      <div class="uiCol panel">
+        <div class="scoreBox">
+          <div class="small">Score</div>
+          <div id="score" class="big">0</div>
+          <div class="small">High Score: <span id="highScore">0</span></div>
+          <div class="small">Level: <span id="level">1</span></div>
+        </div>
+
+        <div style="height:10px"></div>
+        <div class="small">Leaderboard (Top 5)</div>
+        <div class="leader" id="leaderboard"></div>
+        <div style="height:12px"></div>
+        <div class="small">Controls</div>
+        <div class="small">Drag / touch — move. Tap — shoot. Hold tap — auto fire. Arrow keys / A,D also work.</div>
+        <div style="height:12px"></div>
+        <div class="small">Settings</div>
+        <label class="small"><input type="checkbox" id="soundToggle" checked> Sound</label>
+      </div>
+    </div>
+
+    <div style="height:14px"></div>
+    <!-- sample game-card thumbnail you can reuse in gallery -->
+    <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center">
+      <div class="game-card">
+        <img src="https://images.unsplash.com/photo-1502877338535-766e1452684a?q=80&w=1200&auto=format&fit=crop&ixlib=rb-4.0.3&s=0a6b2a3f1ff3f8b2f5e5f8b1e3f6c2d1" alt="Shooter">
+        <a href="#" onclick="document.getElementById('startBtn').click();return false">Play Shooter</a>
+      </div>
+    </div>
+  </div>
+
+<script>
+/* ---------- 2D SHOOTER GAME (single file) ----------
+Features:
+- Responsive canvas
+- Touch drag to move and tap to shoot (auto-fire while holding)
+- Enemies spawn & move down, collisions, score
+- Levels: enemy speed & spawn rate ramp up with score
+- Score / high score saved to localStorage
+- Leaderboard (top 5) saved to localStorage (asks name on game over)
+- Sound effects (toggle)
+-----------------------------------------------------*/
+
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+const startBtn = document.getElementById('startBtn');
+const restartBtn = document.getElementById('restartBtn');
+const scoreEl = document.getElementById('score');
+const highScoreEl = document.getElementById('highScore');
+const leaderboardEl = document.getElementById('leaderboard');
+const levelEl = document.getElementById('level');
+const soundToggle = document.getElementById('soundToggle');
+
+let cw = canvas.width, ch = canvas.height;
+function resizeCanvas(){
+  // keep vertical aspect; scale by container width
+  const parentW = canvas.clientWidth;
+  const scale = parentW / cw;
+  canvas.style.height = (ch * scale) + 'px';
+}
+window.addEventListener('resize', resizeCanvas);
+resizeCanvas();
+
+// game state
+let playing = false;
+let score = 0;
+let highScore = Number(localStorage.getItem('sh_high') || 0);
+let level = 1;
+let enemySpeed = 120; // pixels / sec
+let spawnInterval = 1400; // ms
+let lastSpawn = 0;
+let bullets = [];
+let enemies = [];
+let particles = [];
+let keys = {};
+let touchActive = false;
+let touchX = null;
+let autoShoot = false;
+let lastShot = 0;
+let shotInterval = 300; // ms, decreases with levels
+let lastTime = 0;
+let gameOver = false;
+
+// sounds (public short sounds)
+const sShoot = new Audio('https://www.soundjay.com/misc/sounds/laser-01.mp3');
+const sHit = new Audio('https://www.soundjay.com/button/sounds/button-4.mp3');
+const sLevel = new Audio('https://www.soundjay.com/misc/sounds/bell-ringing-05.mp3');
+const sGameOver = new Audio('https://www.soundjay.com/human/sounds/applause-1.mp3');
+[sShoot,sHit,sLevel,sGameOver].forEach(s=>s.volume=0.8);
+
+// player
+const player = {
+  x: cw/2,
+  y: ch - 120,
+  w: 48,
+  h: 64,
+  speed: 380,
+  color: '#69f',
+  alive: true
+};
+
+// helper: clamp
+function clamp(v,a,b){return Math.max(a,Math.min(b,v));}
+
+// bullets: {x,y,vx,vy,r}
+function spawnBullet(x,y){
+  bullets.push({x:x,y:y-20,vy:-520, r:5});
+  if(soundToggle.checked){ sShoot.currentTime = 0; sShoot.play().catch(()=>{}); }
+}
+
+// enemies: {x,y,w,h,spd,hp}
+function spawnEnemy(){
+  const margin = 40;
+  const x = margin + Math.random()*(cw-2*margin);
+  const w = 44 + Math.floor(Math.random()*40);
+  const h = Math.floor(w*1.0);
+  const spd = enemySpeed + Math.random()*40;
+  const hp = 1 + Math.floor(Math.random()*Math.min(3,level));
+  enemies.push({x:x,y:-h, w:w, h:h, spd:spd, hp:hp});
+}
+
+// particles for explosion
+function spawnParticles(x,y,col,count=10){
+  for(let i=0;i<count;i++){
+    const ang = Math.random()*Math.PI*2;
+    const spd = 80 + Math.random()*260;
+    particles.push({
+      x:x, y:y, vx:Math.cos(ang)*spd, vy:Math.sin(ang)*spd,
+      life: 600 + Math.random()*400, col:col
+    });
+  }
+}
+
+// collision AABB
+function collide(a,b){
+  return !(a.x + (a.w||0)/2 < b.x - b.r || a.x - (a.w||0)/2 > b.x + b.r || a.y + (a.h||0)/2 < b.y - b.r || a.y - (a.h||0)/2 > b.y + b.r);
+}
+
+// update loop
+function update(ts){
+  if(!lastTime) lastTime = ts;
+  const dt = Math.min(40, ts - lastTime); // ms
+  lastTime = ts;
+  if(playing && !gameOver){
+    // level logic: increase difficulty every 200 points
+    level = Math.floor(score/200) + 1;
+    levelEl.innerText = level;
+    // adjust speeds
+    enemySpeed = 120 + (level-1)*22;
+    spawnInterval = Math.max(450, 1400 - (level-1)*120);
+    shotInterval = Math.max(120, 300 - (level-1)*20);
+
+    // spawn enemies
+    lastSpawn += dt;
+    if(lastSpawn >= spawnInterval){
+      lastSpawn = 0;
+      spawnEnemy();
+    }
+
+    // move bullets
+    for(let i=bullets.length-1;i>=0;i--){
+      const b = bullets[i];
+      b.y += b.vy * dt/1000;
+      if(b.y < -20) bullets.splice(i,1);
+    }
+
+    // move enemies
+    for(let i=enemies.length-1;i>=0;i--){
+      const e = enemies[i];
+      e.y += e.spd * dt/1000;
+      if(e.y > ch + 60){ enemies.splice(i,1); continue; }
+    }
+
+    // particles
+    for(let i=particles.length-1;i>=0;i--){
+      const p = particles[i];
+      p.life -= dt;
+      p.x += p.vx * dt/1000;
+      p.y += p.vy * dt/1000;
+      p.vy += 400 * dt/1000;
+      if(p.life <= 0) particles.splice(i,1);
+    }
+
+    // collisions bullets -> enemy
+    for(let i=enemies.length-1;i>=0;i--){
+      const e = enemies[i];
+      for(let j=bullets.length-1;j>=0;j--){
+        const b = bullets[j];
+        // treat enemy center/rect vs bullet r
+        const rect = {x:e.x, y:e.y, w:e.w, h:e.h};
+        const circ = {x:b.x, y:b.y, r:b.r};
+        // AABB vs circle simple test
+        const dx = Math.abs(circ.x - (rect.x + rect.w/2));
+        const dy = Math.abs(circ.y - (rect.y + rect.h/2));
+        if(dx <= rect.w/2 + circ.r && dy <= rect.h/2 + circ.r){
+          // hit
+          bullets.splice(j,1);
+          e.hp--;
+          if(e.hp <= 0){
+            // destroy
+            const points = 10 + Math.floor(Math.random()*10) + level*2;
+            score += points;
+            spawnParticles(e.x + e.w/2, e.y + e.h/2, '#ffcc00', 14);
+            enemies.splice(i,1);
+            if(soundToggle.checked){ sHit.currentTime = 0; sHit.play().catch(()=>{}); }
+          }
+          i = Math.min(i, enemies.length-1);
+          break;
+        }
+      }
+    }
+
+    // enemy -> player collisions
+    for(let i=enemies.length-1;i>=0;i--){
+      const e = enemies[i];
+      const px = player.x - player.w/2, py = player.y - player.h/2;
+      const pRect = {x:px, y:py, w:player.w, h:player.h};
+      const dx = Math.abs((e.x + e.w/2) - (pRect.x + pRect.w/2));
+      const dy = Math.abs((e.y + e.h/2) - (pRect.y + pRect.h/2));
+      if(dx <= (e.w/2 + pRect.w/2) && dy <= (e.h/2 + pRect.h/2)){
+        // game over
+        endGame();
+        return;
+      }
+    }
+
+    // move player by keys or touch
+    // keyboard: A/D / left/right
+    let dir = 0;
+    if(keys['ArrowLeft'] || keys['a']) dir -= 1;
+    if(keys['ArrowRight'] || keys['d']) dir += 1;
+    if(dir !== 0){
+      player.x += dir * player.speed * dt/1000;
+    }
+    if(touchActive && touchX !== null){
+      // smooth follow
+      const tx = touchX * (cw / canvas.clientWidth);
+      const diff = tx - player.x;
+      player.x += diff * 0.2; // easing
+    }
+    // clamp to road bounds (leave margin)
+    const margin = 28;
+    player.x = clamp(player.x, margin, cw - margin);
+
+    // shooting
+    if((autoShoot || touchActive) && diceTimeCheckShot(dt)){
+      spawnBullet(player.x, player.y - player.h/2);
+    }
+    if((keys[' '] || keys['Enter']) && diceTimeCheckShot(dt)){
+      spawnBullet(player.x, player.y - player.h/2);
+    }
+  }
+
+  render();
+  requestAnimationFrame(update);
+}
+
+// shot timing utility
+function diceTimeCheckShot(dt){
+  lastShot += dt;
+  if(lastShot >= shotInterval){
+    lastShot = 0;
+    return true;
+  }
+  return false;
+}
+
+// draw function
+function render(){
+  // logical canvas size cw,ch used for coordinates; canvas visual scaled in CSS
+  ctx.clearRect(0,0,cw,ch);
+
+  // background stars gradient
+  const g = ctx.createLinearGradient(0,0,0,ch);
+  g.addColorStop(0,'#032027'); g.addColorStop(1,'#00111a');
+  ctx.fillStyle = g; ctx.fillRect(0,0,cw,ch);
+
+  // draw player
+  ctx.save();
+  // player shadow
+  ctx.fillStyle = 'rgba(0,0,0,0.25)';
+  ctx.fillRect(player.x - player.w/2 + 6, player.y - player.h/2 + 24, player.w, 8);
+  // body
+  const pg = ctx.createLinearGradient(player.x - player.w/2, player.y - player.h/2, player.x + player.w/2, player.y + player.h/2);
+  pg.addColorStop(0, '#64b5ff'); pg.addColorStop(1, '#2b6cff');
+  ctx.fillStyle = pg;
+  roundRect(ctx, player.x - player.w/2, player.y - player.h/2, player.w, player.h, 8, true, false);
+  // cockpit
+  ctx.fillStyle = 'rgba(255,255,255,0.6)';
+  ctx.fillRect(player.x - 10, player.y - player.h/2 + 6, 20, 18);
+  ctx.restore();
+
+  // bullets
+  for(const b of bullets){
+    ctx.beginPath(); ctx.fillStyle = '#ffec6a'; ctx.arc(b.x, b.y, b.r, 0, Math.PI*2); ctx.fill();
+  }
+
+  // enemies
+  for(const e of enemies){
+    ctx.save();
+    // body
+    ctx.fillStyle = '#ff6666';
+    ctx.fillRect(e.x, e.y, e.w, e.h);
+    // hp bar
+    ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.fillRect(e.x, e.y-8, e.w, 6);
+    ctx.fillStyle = '#00ffb3'; ctx.fillRect(e.x, e.y-8, e.w * (Math.max(0,e.hp)/3), 6);
+    ctx.restore();
+  }
+
+  // particles
+  for(const p of particles){
+    ctx.beginPath(); ctx.fillStyle = p.col; ctx.globalAlpha = Math.max(0, p.life/800); ctx.arc(p.x, p.y, 4, 0, Math.PI*2); ctx.fill(); ctx.globalAlpha = 1;
+  }
+
+  // HUD overlay (score etc)
+  // top-left small
+  ctx.fillStyle = '#fff'; ctx.font = '18px sans-serif'; ctx.textAlign='left';
+  // draw as none (we use HTML elements), but keep canvas clean
+
+  // update HUD elements
+  scoreEl.innerText = score;
+  highScoreEl.innerText = highScore;
+}
+
+// utility: rounded rect
+function roundRect(ctx, x, y, w, h, r, fill, stroke){
+  if (typeof r === 'undefined') r = 5;
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+  if(fill) ctx.fill();
+  if(stroke) ctx.stroke();
+}
+
+// end game
+function endGame(){
+  playing = false; gameOver = true;
+  if(soundToggle.checked){ sGameOver.currentTime = 0; sGameOver.play().catch(()=>{}); }
+  // highscore
+  if(score > highScore){ highScore = score; localStorage.setItem('sh_high', highScore); }
+  // prompt for name and store leaderboard
+  setTimeout(()=>{
+    const name = prompt('Game Over — enter your name for leaderboard:', 'Player') || 'Player';
+    saveLeaderboard(name, score);
+    renderLeaderboard();
+  }, 80);
+}
+
+// leaderboard helpers
+function loadLeaderboard(){
+  try{
+    return JSON.parse(localStorage.getItem('sh_board') || '[]');
+  }catch(e){ return []; }
+}
+function saveLeaderboard(name, sc){
+  const board = loadLeaderboard();
+  board.push({name:name,score:sc,date:Date.now()});
+  board.sort((a,b)=>b.score-a.score);
+  const top = board.slice(0,5);
+  localStorage.setItem('sh_board', JSON.stringify(top));
+}
+function renderLeaderboard(){
+  const board = loadLeaderboard();
+  let html = '';
+  if(board.length===0) html = '<div class="small">No scores yet</div>';
+  else{
+    html = '<ol style="padding-left:18px;margin:6px 0">';
+    for(const it of board) html += `<li style="margin-bottom:6px">${escapeHtml(it.name)} — <strong>${it.score}</strong></li>`;
+    html += '</ol>';
+  }
+  leaderboardEl.innerHTML = html;
+}
+function escapeHtml(s){ return s.replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+// input handlers
+window.addEventListener('keydown',(e)=>{ keys[e.key]=true; if(e.key===' '){ e.preventDefault(); } });
+window.addEventListener('keyup',(e)=>{ keys[e.key]=false; });
+canvas.addEventListener('touchstart',(e)=>{ e.preventDefault(); touchActive=true; touchX = e.touches[0].clientX - canvas.getBoundingClientRect().left; autoShoot=true; }, {passive:false});
+canvas.addEventListener('touchmove',(e)=>{ e.preventDefault(); touchX = e.touches[0].clientX - canvas.getBoundingClientRect().left; }, {passive:false});
+canvas.addEventListener('touchend',(e)=>{ touchActive=false; touchX=null; autoShoot=false; }, {passive:false});
+canvas.addEventListener('mousedown',(e)=>{ touchActive=true; touchX = e.clientX - canvas.getBoundingClientRect().left; autoShoot=true; });
+canvas.addEventListener('mousemove',(e)=>{ if(touchActive){ touchX = e.clientX - canvas.getBoundingClientRect().left; }});
+window.addEventListener('mouseup',(e)=>{ touchActive=false; touchX=null; autoShoot=false; });
+
+// start / restart
+startBtn.addEventListener('click', ()=>{
+  if(!playing){
+    playing = true; gameOver=false; score=0; enemies=[]; bullets=[]; particles=[]; lastSpawn=0; lastShot=shotInterval;
+    // set player pos center bottom
+    player.x = cw/2; player.y = ch - 120;
+    renderLeaderboard(); requestAnimationFrame(update);
+  }
+});
+restartBtn.addEventListener('click', ()=>{
+  // reset state
+  playing = true; gameOver=false; score=0; enemies=[]; bullets=[]; particles=[]; lastSpawn=0; lastShot=shotInterval;
+  player.x = cw/2; player.y = ch - 120;
+  renderLeaderboard();
+});
+
+// initialize visuals & leaderboard
+renderLeaderboard();
+
+// set cw,ch from canvas attributes
+cw = canvas.width; ch = canvas.height;
+player.x = cw/2; player.y = ch - 120;
+highScore = Number(localStorage.getItem('sh_high') || 0);
+highScoreEl.innerText = highScore;
+
+// kick the animation (idle render)
+requestAnimationFrame(update);
+
+// small helper: auto-fire when holding keys
+setInterval(()=>{
+  if(playing && !gameOver){
+    // shooting handled in update by autoShoot/touchActive or keys
+  }
+}, 200);
+
+</script>
+</body>
+</html>

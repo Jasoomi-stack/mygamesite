@@ -1,0 +1,517 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Polished Ludo — Single File</title>
+<style>
+  :root{
+    --bg:#f3f6f8;
+    --panel:#ffffff;
+    --muted:#666;
+    --accent:#2ecc71;
+    --card-shadow: 0 10px 30px rgba(0,0,0,0.12);
+  }
+  html,body{height:100%;margin:0;background:var(--bg);font-family:Inter,system-ui,Segoe UI,Roboto,Helvetica,Arial}
+  .wrap{max-width:820px;margin:18px auto;padding:12px}
+  h1{margin:6px 0 12px;font-size:20px;text-align:center}
+  .panel{background:var(--panel);border-radius:12px;padding:12px;box-shadow:var(--card-shadow)}
+  .boardRow{display:flex;gap:12px;align-items:flex-start;flex-wrap:wrap}
+  .canvasWrap{flex:1 1 480px;min-width:320px}
+  #board{width:100%;height:auto;display:block;border-radius:8px;background:#fff}
+  .sidebar{width:240px;flex:0 0 240px}
+  .controls{display:flex;flex-direction:column;gap:10px;align-items:center}
+  button{cursor:pointer;padding:10px 14px;border-radius:10px;border:0;background:#fff;box-shadow:0 4px 8px rgba(0,0,0,0.08);font-weight:700}
+  #rollBtn{background:linear-gradient(180deg,#fff,#efefef)}
+  .diceBox{display:flex;flex-direction:column;align-items:center;gap:8px}
+  #diceVisual{width:84px;height:84px;border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:28px;font-weight:900;background:linear-gradient(180deg,#fff,#f5f5f5);box-shadow:0 6px 14px rgba(0,0,0,0.08)}
+  #turn{font-weight:800}
+  #msg{color:var(--muted);font-size:13px;text-align:center}
+  .infoRow{display:flex;gap:8px;align-items:center;justify-content:center;margin-top:6px}
+  .small{font-size:13px;color:var(--muted)}
+  .credits{font-size:12px;color:#999;text-align:center;margin-top:8px}
+  /* token highlight ring */
+  .pulse {
+    box-shadow: 0 0 0 6px rgba(0,0,0,0.06);
+  }
+  /* Responsive */
+  @media (max-width:920px){ .boardRow{flex-direction:column-reverse} .sidebar{width:100%} }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Polished Ludo — Local Pass & Play</h1>
+    <div class="panel boardRow">
+      <div class="canvasWrap panel" style="padding:10px">
+        <canvas id="board" width="720" height="720"></canvas>
+        <div style="display:flex;justify-content:space-between;margin-top:10px;align-items:center">
+          <div class="small">Tap Roll → tap token to move</div>
+          <div class="small">Safe squares: colored border</div>
+        </div>
+      </div>
+
+      <div class="sidebar panel" style="display:flex;flex-direction:column;align-items:center;gap:10px">
+        <div class="diceBox">
+          <button id="rollBtn">🎲 Roll</button>
+          <div id="diceVisual">-</div>
+        </div>
+
+        <div style="text-align:center">
+          <div id="turn">Turn: -</div>
+          <div id="msg" class="small">Press Roll to start</div>
+        </div>
+
+        <div style="width:100%;display:flex;flex-direction:column;gap:6px;align-items:center">
+          <button id="restartBtn">🔁 Restart</button>
+          <div class="infoRow">
+            <div style="width:12px;height:12px;background:#e74c3c;border-radius:50%"></div><div class="small">Red</div>
+            <div style="width:12px;height:12px;background:#27ae60;border-radius:50%;margin-left:8px"></div><div class="small">Green</div>
+            <div style="width:12px;height:12px;background:#f1c40f;border-radius:50%;margin-left:8px"></div><div class="small">Yellow</div>
+            <div style="width:12px;height:12px;background:#2980b9;border-radius:50%;margin-left:8px"></div><div class="small">Blue</div>
+          </div>
+        </div>
+
+        <div class="credits">Made for mobile & desktop — Ludo style game (local)</div>
+      </div>
+    </div>
+  </div>
+
+<script>
+/* ---------- Polished Ludo (single file) ----------
+ - responsive canvas
+ - nicer visuals (board drawn with colors)
+ - tokens are glossy circles with simple shadows
+ - dice roll animation (visual spinner)
+ - token movement animation (smooth) + capture
+ - rules: enter on 6, capture on non-safe squares, safe squares = start positions
+ - pass-and-play 4 players
+---------------------------------------------------*/
+
+const canvas = document.getElementById('board');
+const ctx = canvas.getContext('2d');
+
+const rollBtn = document.getElementById('rollBtn');
+const restartBtn = document.getElementById('restartBtn');
+const diceVisual = document.getElementById('diceVisual');
+const turnEl = document.getElementById('turn');
+const msgEl = document.getElementById('msg');
+
+let size, cell, pathCoords = [], homeStretches = {};
+let players, safeSquares;
+let tokens = [], currentPlayer = 0, diceValue = 0, diceRolled = false, movesAvailable = [], gameOver = false;
+let animatingMove = false;
+
+// small sounds (free short sounds)
+const soundRoll = new Audio('https://actions.google.com/sounds/v1/alarms/clock_alarm.ogg');
+const soundMove = new Audio('https://www.soundjay.com/button/sounds/button-16.mp3');
+const soundCapture = new Audio('https://www.soundjay.com/misc/sounds/bell-ringing-05.mp3');
+const soundWin = new Audio('https://www.soundjay.com/human/sounds/applause-8.mp3');
+
+// Responsive canvas fit
+function fitCanvas(){
+  const maxW = Math.min(window.innerWidth - 32, 720);
+  canvas.width = maxW;
+  canvas.height = maxW;
+  size = canvas.width;
+  cell = size / 15;
+  buildPath();
+  render();
+}
+window.addEventListener('resize', fitCanvas);
+
+// Build visual path coordinates and home stretches
+function buildPath(){
+  pathCoords = [];
+  // Build a pleasing 52-position ring using 13 per side points
+  function addLine(x1,y1,x2,y2,steps){
+    for(let i=0;i<steps;i++){
+      const t = i/(steps-1);
+      const x = x1 + (x2-x1)*t, y = y1 + (y2-y1)*t;
+      pathCoords.push({x:x*cell, y:y*cell});
+    }
+  }
+  // approximate rectangle ring (grid coordinates)
+  addLine(6,0,14,6,13);
+  addLine(14,6,8,14,13);
+  addLine(8,14,0,8,13);
+  addLine(0,8,6,0,13);
+  pathCoords.length = 52; // force 52
+
+  // home stretches
+  homeStretches = {
+    0: [ {x:7*cell,y:1*cell},{x:7*cell,y:2*cell},{x:7*cell,y:3*cell},{x:7*cell,y:4*cell},{x:7*cell,y:5*cell},{x:7*cell,y:6*cell} ],
+    1: [ {x:13*cell,y:7*cell},{x:12*cell,y:7*cell},{x:11*cell,y:7*cell},{x:10*cell,y:7*cell},{x:9*cell,y:7*cell},{x:8*cell,y:7*cell} ],
+    2: [ {x:7*cell,y:13*cell},{x:7*cell,y:12*cell},{x:7*cell,y:11*cell},{x:7*cell,y:10*cell},{x:7*cell,y:9*cell},{x:7*cell,y:8*cell} ],
+    3: [ {x:1*cell,y:7*cell},{x:2*cell,y:7*cell},{x:3*cell,y:7*cell},{x:4*cell,y:7*cell},{x:5*cell,y:7*cell},{x:6*cell,y:7*cell} ]
+  };
+
+  players = [
+    {name:'Red', color:'#e74c3c', start:0},
+    {name:'Green', color:'#27ae60', start:13},
+    {name:'Yellow', color:'#f1c40f', start:26},
+    {name:'Blue', color:'#2980b9', start:39}
+  ];
+  safeSquares = new Set(players.map(p=>p.start));
+}
+
+// initialize tokens and state
+function resetGame(){
+  tokens = [];
+  for(let p=0;p<4;p++){
+    tokens[p] = [];
+    for(let i=0;i<4;i++) tokens[p].push({state:'yard', pos:-1, anim:{x:0,y:0}});
+  }
+  currentPlayer = 0;
+  diceValue = 0;
+  diceRolled = false;
+  movesAvailable = [];
+  gameOver = false;
+  updateUI('Game ready — Red starts');
+  render();
+}
+window.restartGame = resetGame;
+restartBtn.addEventListener('click', ()=>{ resetGame(); });
+
+// Dice roll animation (visual spinner + sound)
+let rolling=false;
+function rollDice(){
+  if(gameOver || rolling || animatingMove) return;
+  rolling = true;
+  rollBtn.disabled = true;
+  soundRoll.currentTime = 0; soundRoll.play().catch(()=>{});
+  // visual rapid frames then final face
+  let frames = 26 + Math.floor(Math.random()*18);
+  let i=0;
+  const spin = setInterval(()=>{
+    const r = Math.floor(Math.random()*6)+1;
+    diceVisual.innerText = r;
+    diceVisual.style.transform = `rotate(${(i*36)%360}deg)`;
+    i++;
+    if(i>=frames){
+      clearInterval(spin);
+      diceValue = Math.floor(Math.random()*6)+1;
+      diceVisual.innerText = diceValue;
+      diceVisual.style.transform = 'rotate(0deg)';
+      diceRolled = true;
+      movesAvailable = computeMovesForPlayer(currentPlayer, diceValue);
+      if(movesAvailable.length===0){
+        updateUI(`${players[currentPlayer].name} rolled ${diceValue} — no moves`);
+        if(diceValue !== 6){
+          setTimeout(()=> nextPlayer(), 800);
+        } else {
+          // rolled 6 but cannot move -> allow another roll
+          diceRolled = false; diceValue = 0;
+        }
+      } else updateUI(`${players[currentPlayer].name} rolled ${diceValue}. Tap a highlighted token.`);
+      rollBtn.disabled = false;
+      rolling = false;
+      render();
+    }
+  }, 45);
+}
+rollBtn.addEventListener('click', rollDice);
+
+// compute moves available for current player's tokens
+function computeMovesForPlayer(p, dice){
+  const list=[];
+  for(let t=0;t<4;t++){
+    const tok = tokens[p][t];
+    if(tok.state === 'yard'){
+      if(dice===6) list.push(t);
+    } else if(tok.state === 'onpath'){
+      const entrance = players[p].start;
+      const distToEntrance = (entrance - tok.pos + pathCoords.length) % pathCoords.length;
+      if(dice>distToEntrance){
+        const stepsInHome = dice - distToEntrance - 1;
+        if(stepsInHome < homeStretches[p].length) list.push(t);
+      } else list.push(t);
+    } else if(tok.state === 'home'){
+      const newIdx = tok.pos + dice;
+      if(newIdx < homeStretches[p].length) list.push(t);
+    }
+  }
+  return list;
+}
+
+// handle click/tap to move highlighted token
+canvas.addEventListener('click', onTap);
+canvas.addEventListener('touchstart', (e)=>{ onTap(e.touches[0]); }, {passive:true});
+
+function onTap(e){
+  if(!diceRolled || gameOver || animatingMove) { updateUI('Roll first'); return; }
+  const rect = canvas.getBoundingClientRect();
+  const x = (e.clientX || e.pageX) - rect.left;
+  const y = (e.clientY || e.pageY) - rect.top;
+  // check highlighted tokens for currentPlayer
+  const radius = cell*0.28;
+  for(const tIndex of movesAvailable){
+    const tok = tokens[currentPlayer][tIndex];
+    const pos = tokenScreenPos(currentPlayer, tIndex);
+    const d = Math.hypot(x - pos.x, y - pos.y);
+    if(d <= radius + 6){
+      // perform move with animation
+      doMove(currentPlayer, tIndex);
+      return;
+    }
+  }
+  updateUI('Tap a highlighted token to move');
+}
+
+// calculate screen center pos of token
+function tokenScreenPos(p,t){
+  const tok = tokens[p][t];
+  if(tok.state === 'yard'){
+    const yard = yardMap()[p];
+    const pos = yard[t];
+    return pos;
+  } else if(tok.state === 'onpath'){
+    const c = pathCoords[tok.pos % pathCoords.length];
+    return {x: c.x + cell/2, y: c.y + cell/2};
+  } else {
+    const c = homeStretches[p][tok.pos];
+    return {x: c.x + cell/2, y: c.y + cell/2};
+  }
+}
+
+function doMove(p, tIndex){
+  if(animatingMove) return;
+  const tok = tokens[p][tIndex];
+  // determine target state & path of steps (array of coordinates)
+  const steps = []; // array of {x,y, state, posIndex}
+  if(tok.state === 'yard'){
+    // enter at start index
+    const startIdx = players[p].start;
+    steps.push({state:'onpath', pos: startIdx});
+  } else if(tok.state === 'onpath'){
+    const entrance = players[p].start;
+    const distToEntrance = (entrance - tok.pos + pathCoords.length) % pathCoords.length;
+    if(diceValue > distToEntrance){
+      // go into home
+      for(let s=1;s<=diceValue;s++){
+        if(s <= distToEntrance){
+          steps.push({state:'onpath', pos:(tok.pos + s) % pathCoords.length});
+        } else {
+          const homeIdx = s - distToEntrance - 1;
+          steps.push({state:'home', pos: homeIdx});
+        }
+      }
+    } else {
+      for(let s=1;s<=diceValue;s++){
+        steps.push({state:'onpath', pos:(tok.pos + s) % pathCoords.length});
+      }
+    }
+  } else if(tok.state === 'home'){
+    for(let s=1;s<=diceValue;s++){
+      steps.push({state:'home', pos: tok.pos + s});
+    }
+  }
+
+  // animate steps sequentially
+  animatingMove = true;
+  let i = 0;
+  const animateStep = () => {
+    if(i >= steps.length){
+      // finalize, apply capture checks
+      const final = steps[steps.length-1];
+      tok.state = final.state; tok.pos = final.pos;
+      // capture check if landed on onpath and not safe
+      if(tok.state === 'onpath'){
+        for(let op=0; op<4; op++){
+          if(op === p) continue;
+          for(let ot=0; ot<4; ot++){
+            const oth = tokens[op][ot];
+            if(oth.state === 'onpath' && oth.pos === tok.pos && !safeSquares.has(tok.pos)){
+              // capture
+              oth.state = 'yard'; oth.pos = -1;
+              soundCapture.currentTime=0; soundCapture.play().catch(()=>{});
+            }
+          }
+        }
+      }
+      soundMove.currentTime=0; soundMove.play().catch(()=>{});
+      // after move finalize
+      diceRolled = false; diceValue = 0; movesAvailable = [];
+      animatingMove = false;
+      render();
+      // check win
+      if(checkWin(p)){ updateUI(`${players[p].name} wins! 🎉`); gameOver = true; soundWin.play().catch(()=>{}); return; }
+      // next player if not rolled 6
+      if(steps.length>0 && (diceValue !== 6)){ /* but diceValue is 0 now */ }
+      // We need to know whether the roll was 6 before resetting: we used diceValue earlier - store prevDice
+      // Simpler: store prevDice in closure
+      if(prevDiceForMove !== 6) nextPlayer();
+      else updateUI(`${players[p].name} rolled 6 — roll again`);
+      return;
+    }
+    const s = steps[i];
+    // animate token from current screen pos to s target screen pos
+    const from = tokenScreenPos(p,tIndex);
+    const to = s.state === 'onpath' ? {x: pathCoords[s.pos%pathCoords.length].x + cell/2, y: pathCoords[s.pos%pathCoords.length].y + cell/2}
+             : {x: homeStretches[p][s.pos].x + cell/2, y: homeStretches[p][s.pos].y + cell/2};
+    // animate 200ms
+    const start = performance.now();
+    const duration = 160;
+    function stepFrame(now){
+      const t = Math.min(1, (now - start) / duration);
+      const ease = (--t)*t*t+1; // easeOut
+      const curx = from.x + (to.x - from.x) * ease;
+      const cury = from.y + (to.y - from.y) * ease;
+      // temporarily render token at curx,cury
+      render(); // draw background and all tokens
+      drawMovingToken(p, tIndex, curx, cury);
+      if(now - start < duration) requestAnimationFrame(stepFrame);
+      else {
+        // commit intermediate state on screen by drawing full render
+        i++;
+        requestAnimationFrame(animateStep);
+      }
+    }
+    requestAnimationFrame(stepFrame);
+  };
+
+  // store prevDice used to determine nextPlayer
+  const prevDiceForMove = diceValue;
+  animateStep();
+}
+
+// helper to draw a token while animating
+function drawMovingToken(p,tIndex,x,y){
+  const radius = cell*0.28;
+  ctx.beginPath();
+  ctx.fillStyle = players[p].color;
+  // glossy radial
+  const g = ctx.createRadialGradient(x - radius*0.4, y - radius*0.6, radius*0.1, x, y, radius);
+  g.addColorStop(0, '#ffffff80'); g.addColorStop(0.18, players[p].color); g.addColorStop(1, darken(players[p].color, -8));
+  ctx.fillStyle = g;
+  ctx.arc(x,y,radius,0,Math.PI*2); ctx.fill();
+  ctx.lineWidth = 2; ctx.strokeStyle = '#222'; ctx.stroke();
+  ctx.fillStyle = '#111'; ctx.font = `${cell*0.22}px sans-serif`; ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillText(tIndex+1, x, y);
+}
+
+// small color darken helper
+function darken(hex, amt){
+  // hex like #rrggbb
+  hex = hex.replace('#','');
+  const num = parseInt(hex,16);
+  let r = (num >> 16) + amt, g = ((num >> 8) & 0x00FF) + amt, b = (num & 0x0000FF) + amt;
+  r = Math.max(0,Math.min(255,r)); g = Math.max(0,Math.min(255,g)); b = Math.max(0,Math.min(255,b));
+  return '#'+(r<<16 | g<<8 | b).toString(16).padStart(6,'0');
+}
+
+// check for a win
+function checkWin(p){
+  return tokens[p].every(t => t.state === 'home' && t.pos === homeStretches[p].length - 1);
+}
+
+// next player routine
+function nextPlayer(){
+  currentPlayer = (currentPlayer + 1) % 4;
+  diceValue = 0; diceRolled = false; movesAvailable = [];
+  updateUI(`${players[currentPlayer].name}'s turn`);
+  render();
+}
+
+// UI update helper
+function updateUI(msg){
+  if(msg) msgEl.innerText = msg;
+  diceVisual.innerText = diceValue || '-';
+  turnEl.innerText = `Turn: ${players[currentPlayer].name}`;
+  if(!msg) msgEl.innerText = '';
+}
+
+// check moves highlight & render
+function render(){
+  // background
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  drawBoard();
+  drawPathSquares();
+  drawHomeStretches();
+  drawTokens();
+  updateUI();
+}
+
+// draw board background (homes + center)
+function drawBoard(){
+  // light background
+  ctx.fillStyle = '#f7f7f7'; ctx.fillRect(0,0,canvas.width,canvas.height);
+  // four big home squares
+  ctx.fillStyle = players[0].color; ctx.fillRect(0,0,6*cell,6*cell);
+  ctx.fillStyle = players[1].color; ctx.fillRect(9*cell,0,6*cell,6*cell);
+  ctx.fillStyle = players[2].color; ctx.fillRect(0,9*cell,6*cell,6*cell);
+  ctx.fillStyle = players[3].color; ctx.fillRect(9*cell,9*cell,6*cell,6*cell);
+  // small inner colored centers
+  // center white
+  ctx.fillStyle = '#ffffff'; ctx.fillRect(6*cell,6*cell,3*cell,3*cell);
+  // grid lines
+  ctx.strokeStyle = '#e0e0e0'; ctx.lineWidth = 1;
+  for(let i=0;i<=15;i++){
+    ctx.beginPath(); ctx.moveTo(i*cell,0); ctx.lineTo(i*cell,canvas.height); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0,i*cell); ctx.lineTo(canvas.width,i*cell); ctx.stroke();
+  }
+}
+
+// draw outer path squares
+function drawPathSquares(){
+  for(let i=0;i<pathCoords.length;i++){
+    const c = pathCoords[i];
+    ctx.fillStyle = '#fff'; ctx.fillRect(c.x + cell*0.12, c.y + cell*0.12, cell*0.76, cell*0.76);
+    if(safeSquares.has(i)){
+      ctx.strokeStyle = '#222'; ctx.lineWidth = 2; ctx.strokeRect(c.x + cell*0.12, c.y + cell*0.12, cell*0.76, cell*0.76);
+    }
+  }
+}
+
+// draw home stretch squares
+function drawHomeStretches(){
+  for(let p=0;p<4;p++){
+    for(let s=0;s<homeStretches[p].length;s++){
+      const c = homeStretches[p][s];
+      ctx.fillStyle = '#fff'; ctx.fillRect(c.x + cell*0.12, c.y + cell*0.12, cell*0.76, cell*0.76);
+      ctx.strokeStyle = '#ddd'; ctx.strokeRect(c.x + cell*0.12, c.y + cell*0.12, cell*0.76, cell*0.76);
+    }
+  }
+}
+
+// yard positions map
+function yardMap(){
+  return [
+    [{x:cell*1.5,y:cell*1.5},{x:cell*3.5,y:cell*1.5},{x:cell*1.5,y:cell*3.5},{x:cell*3.5,y:cell*3.5}],
+    [{x:cell*10.5,y:cell*1.5},{x:cell*12.5,y:cell*1.5},{x:cell*10.5,y:cell*3.5},{x:cell*12.5,y:cell*3.5}],
+    [{x:cell*1.5,y:cell*10.5},{x:cell*3.5,y:cell*10.5},{x:cell*1.5,y:cell*12.5},{x:cell*3.5,y:cell*12.5}],
+    [{x:cell*10.5,y:cell*10.5},{x:cell*12.5,y:cell*10.5},{x:cell*10.5,y:cell*12.5},{x:cell*12.5,y:cell*12.5}]
+  ];
+}
+
+// draw tokens (static)
+function drawTokens(){
+  const radius = cell*0.28;
+  const yards = yardMap();
+  for(let p=0;p<4;p++){
+    for(let t=0;t<4;t++){
+      const tok = tokens[p][t];
+      let cx, cy;
+      if(tok.state === 'yard'){ cx = yards[p][t].x; cy = yards[p][t].y; }
+      else if(tok.state === 'onpath'){ const c = pathCoords[tok.pos % pathCoords.length]; cx = c.x + cell/2; cy = c.y + cell/2; }
+      else { const c = homeStretches[p][tok.pos]; cx = c.x + cell/2; cy = c.y + cell/2; }
+      // token shading
+      const grad = ctx.createRadialGradient(cx - radius*0.35, cy - radius*0.55, radius*0.1, cx, cy, radius);
+      grad.addColorStop(0, 'rgba(255,255,255,0.95)');
+      grad.addColorStop(0.18, players[p].color);
+      grad.addColorStop(1, darken(players[p].color, -6));
+      ctx.beginPath(); ctx.fillStyle = grad; ctx.arc(cx, cy, radius, 0, Math.PI*2); ctx.fill();
+      ctx.lineWidth = 2; ctx.strokeStyle = 'rgba(0,0,0,0.18)'; ctx.stroke();
+      // label
+      ctx.fillStyle = '#111'; ctx.font = `${cell*0.22}px sans-serif`; ctx.textAlign='center'; ctx.textBaseline='middle';
+      ctx.fillText(t+1, cx, cy);
+      // highlight movable tokens
+      if(p===currentPlayer && movesAvailable.includes(t) && diceRolled){
+        ctx.beginPath(); ctx.lineWidth = 3; ctx.strokeStyle = '#000'; ctx.setLineDash([6,4]); ctx.arc(cx,cy,radius+6,0,Math.PI*2); ctx.stroke(); ctx.setLineDash([]);
+      }
+    }
+  }
+}
+
+// Utility: darken hex by amt
+function darken(hex, amt){
+  hex = hex.replace('#','');
+  const num = 
